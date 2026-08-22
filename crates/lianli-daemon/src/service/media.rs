@@ -40,14 +40,29 @@ fn asset_cache_key(
 
 impl ServiceManager {
     pub(super) fn prepare_media_assets(&mut self, tx: Sender<DaemonEvent>) {
-        let screen_map: HashMap<String, ScreenInfo> = enumerate_devices()
+        let detected: Vec<(String, DeviceFamily, ScreenInfo)> = enumerate_devices()
             .unwrap_or_default()
             .into_iter()
             .filter_map(|det| {
                 let screen = screen_info_for(det.family)?;
                 let id = hid_id_norm(&det.device_id()).to_string();
-                Some((id, screen))
+                Some((id, det.family, screen))
             })
+            .collect();
+        let screen_map: HashMap<String, ScreenInfo> = detected
+            .iter()
+            .map(|(id, _, screen)| (id.clone(), *screen))
+            .collect();
+        // Mirror the alias fallback used when attaching targets: a wired AIO
+        // LCD's enumerated id can differ from the configured serial (serial
+        // form vs. vid:pid:port form) depending on whether the serial string
+        // was readable at enumeration. Without this the asset canvas silently
+        // falls back to WIRELESS_LCD (400x400) and renders shrunken on a
+        // 480x480 panel.
+        let wired_aio_screens: Vec<ScreenInfo> = detected
+            .iter()
+            .filter(|(_, family, _)| is_wired_aio_lcd(*family))
+            .map(|(_, _, screen)| *screen)
             .collect();
 
         let all_sensors = lianli_shared::sensors::enumerate_sensors();
@@ -61,6 +76,16 @@ impl ServiceManager {
                     .serial
                     .as_ref()
                     .and_then(|s| screen_map.get(hid_id_norm(s)).copied())
+                    .or_else(|| {
+                        // Alias fallback: only when exactly one LCD config and
+                        // exactly one wired AIO LCD exist, same rule as
+                        // target attachment.
+                        if cfg.lcds.len() == 1 && wired_aio_screens.len() == 1 {
+                            Some(wired_aio_screens[0])
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(ScreenInfo::WIRELESS_LCD);
                 let cfg_key =
                     asset_cache_key(device, &user_templates, &all_sensors, cfg.default_fps);
