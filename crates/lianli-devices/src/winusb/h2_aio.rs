@@ -397,6 +397,16 @@ impl H2AioController {
         if frames.is_empty() {
             return Ok(());
         }
+        // Bridged to a wireless AIO: the same 24-LED ring is driven over RF
+        // through the pump-head device, as the fan and pump paths already
+        // are, so this packet is redundant here. It is also fatal: sent after
+        // the LCD has ever streamed it hangs the MCU even once StopPlay has
+        // been acknowledged (2026-09-06, twice), and no send after a stream
+        // has ever been seen to succeed on this unit or Mats2208's.
+        if self.is_wireless.load(Ordering::Relaxed) {
+            debug!("H2: PushRgbData skipped — ring is driven over RF (wireless mode)");
+            return Ok(());
+        }
         let total_frames = frames.len();
 
         let mut raw = Vec::with_capacity(total_frames * RING_LED_COUNT * 3);
@@ -427,15 +437,15 @@ impl H2AioController {
         // so it exceeds one bulk packet; send_control uses write_full so every
         // byte goes out (a plain write() merely warned on the short write).
         // Not play-safe: a PushRgbData during H.264 play mode hangs the panel
-        // even at buffer level 1 (2026-08-23) — presumably the firmware feeds
-        // the payload after the header to its stream parser. While the LCD
-        // streams, the ring is reachable over RF through the bridged wireless
-        // AIO instead; this frame is held until the stream ends.
+        // even at buffer level 1 (2026-08-23), and one sent after the stream
+        // ended hangs it too (2026-09-06) — presumably the firmware feeds the
+        // payload after the header to its stream parser. Queued here, it is
+        // dropped by the stream thread when the stream ends.
         let sent = self.send_control("PushRgbData", packet, Duration::from_millis(100), false)?;
         if !sent {
             tracing::warn!(
-                "H2: ring RGB held until the LCD stream ends (PushRgbData hangs the panel in play mode); \
-                 use the wireless pump-head device to recolour the ring while streaming"
+                "H2: ring RGB dropped while the LCD streams (PushRgbData hangs the panel in and after play mode); \
+                 the ring cannot be recoloured over USB until the device is re-enumerated"
             );
         }
         debug!(

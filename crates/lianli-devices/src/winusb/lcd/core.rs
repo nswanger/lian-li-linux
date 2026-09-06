@@ -20,8 +20,8 @@ pub struct PendingCmd {
     pub queued_at: Instant,
     /// May this go out between chunks once the panel reports headroom? False
     /// for commands that hang the panel in play mode regardless of buffer
-    /// level (PushRgbData — tested at levels 4 and 1, 2026-08-23); those wait
-    /// for the stream to end.
+    /// level (PushRgbData — tested at levels 4 and 1, 2026-08-23) and also
+    /// after it (2026-09-06); those are dropped when the stream ends.
     pub play_safe: bool,
 }
 
@@ -766,10 +766,16 @@ impl WinUsbLcdCore {
         self.transport.set_streaming(true);
     }
 
-    /// Mark the end of a stream. If it ended cleanly the panel is idle now, so
-    /// anything still queued goes out directly (bypassing the level check);
-    /// after an error the queue is dropped rather than hammering a device that
-    /// just stopped answering.
+    /// Mark the end of a stream and flush the play-safe commands the control
+    /// channel queued while it ran. After an error the queue is dropped
+    /// rather than hammering a device that just stopped answering.
+    ///
+    /// Commands that are unsafe in play mode are dropped, not sent. The host
+    /// stopping the feed does not idle the panel, and a PushRgbData sent
+    /// here wedged the MCU twice on 2026-09-06 — once straight after the
+    /// feed stopped, once after an acknowledged StopPlay. No such send
+    /// after a stream has ever been seen to succeed, so there is no safe
+    /// point to hold it for.
     fn stream_end(&mut self, clean: bool) {
         {
             let _bulk = self.transport.lock();
@@ -780,6 +786,13 @@ impl WinUsbLcdCore {
             return;
         }
         for cmd in pending {
+            if !cmd.play_safe {
+                warn!(
+                    "Dropping deferred {} at stream end: unsafe on the wired pipe after a stream",
+                    cmd.label
+                );
+                continue;
+            }
             debug!("Sending deferred {} after stream end", cmd.label);
             if let Err(e) = self.send_deferred(&cmd) {
                 warn!("Deferred {} write failed: {e}", cmd.label);
