@@ -1,0 +1,10 @@
+guide = "AGENTS.md"
+shims = ["CLAUDE.md"]
+decisions = "docs/decisions"
+living = ["README.md", "docs/local/h2-wired-protocol.md"]
+archive_dirs = ["_archive"]
+ephemera = ["docs/specs", "docs/plans", "docs/research", ".scratch"]
+skip_dirs = [".git", "node_modules", "target", "vendor", ".claude", "crates/lianli-gui-old", ".copr", "templates"]
+forbidden_paths = ["docs/handoffs", "docs/STATUS.md", "docs/open-questions.md", "HANDOFF.md"]
+root_docs_exempt = ["DOC_LINT.md", "LICENSE.md", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"]
+token_cap = 2000
