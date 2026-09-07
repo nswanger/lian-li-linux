@@ -146,6 +146,7 @@ impl LcdLink {
     pub(crate) fn push_and_recover(
         &self,
         name: &str,
+        preamble: &[(&'static str, Vec<u8>)],
         cmds: &[PendingCmd],
         write_timeout: Duration,
         from_stream_thread: bool,
@@ -153,6 +154,18 @@ impl LcdLink {
         let mut bulk = self.bulk.lock();
         if !from_stream_thread && self.is_streaming() {
             return Ok(false);
+        }
+        // Wake commands go out under the same guard as the streaming check,
+        // so a stream that begins meanwhile cannot see them land mid play
+        for (label, packet) in preamble {
+            bulk.write_full(packet, write_timeout)
+                .with_context(|| format!("H2 ring: {label} write"))?;
+            let mut buf = [0u8; 512];
+            match bulk.read(&mut buf, WAKE_REPLY_WAIT) {
+                Ok(n) if n > 0 => debug!("H2 ring: reply to {label} ({n} bytes)"),
+                Ok(_) => debug!("H2 ring: no reply to {label} (timeout)"),
+                Err(e) => debug!("H2 ring: no reply to {label}: {e}"),
+            }
         }
         let started = Instant::now();
         for cmd in cmds {
@@ -279,6 +292,8 @@ const CONTROL_RELAX_AFTER: Duration = Duration::from_secs(3);
 const REOPEN_DELAY: Duration = Duration::from_millis(100);
 /// Gap between the wake-preamble commands (StopPlay, StopClock, GetVer).
 const WAKE_STEP: Duration = Duration::from_millis(150);
+/// Reply wait for the wake commands inside a push and recover cycle.
+const WAKE_REPLY_WAIT: Duration = Duration::from_millis(100);
 /// After a PushRgbData and reopen: how long to poll GetVer for the panel
 /// to answer, the gap between polls, and each poll's reply wait.
 const PANEL_SILENCE_BUDGET: Duration = Duration::from_secs(10);
@@ -303,6 +318,9 @@ pub(crate) struct WinUsbLcdCore {
     pub(crate) h264_chunk_size: usize,
     pub(crate) device_gone: bool,
     pub(crate) firmware: Option<String>,
+    /// Frame rate the current stream asked for, reapplied after a reinit
+    /// cycle since h2_control_init resets the panel to 30.
+    stream_fps: Option<f32>,
 }
 
 /// Read the serial the kernel cached at enumeration, matching on bus/device
@@ -384,6 +402,7 @@ impl WinUsbLcdCore {
             h264_chunk_size: 202_752,
             device_gone: false,
             firmware: None,
+            stream_fps: None,
         })
     }
 
@@ -406,6 +425,7 @@ impl WinUsbLcdCore {
             h264_chunk_size: 202_752,
             device_gone: false,
             firmware: None,
+            stream_fps: None,
         }
     }
 
@@ -779,6 +799,7 @@ impl WinUsbLcdCore {
     }
 
     pub(crate) fn apply_stream_fps(&mut self, fps: f32) -> Result<()> {
+        self.stream_fps = Some(fps);
         let clamped = fps.round().clamp(1.0, self.screen.max_fps as f32) as u8;
         self.set_frame_rate(clamped)
     }
@@ -922,9 +943,9 @@ impl WinUsbLcdCore {
         let stop_clock = self.builder.stop_clock_header_winusb();
         self.send_command(stop_clock, "StopClock");
         std::thread::sleep(WAKE_STEP);
-        if let Err(e) = self
-            .transport
-            .push_and_recover(&self.name, &cmds, self.write_timeout, true)
+        if let Err(e) =
+            self.transport
+                .push_and_recover(&self.name, &[], &cmds, self.write_timeout, true)
         {
             // Nothing confirmed delivered: put the commands back so the
             // next stream start or control-channel write retries them.
@@ -934,6 +955,12 @@ impl WinUsbLcdCore {
             return Err(e);
         }
         self.h2_control_init();
+        // The init just reset the panel rate to 30, restore the stream rate
+        if let Some(fps) = self.stream_fps {
+            if let Err(e) = self.apply_stream_fps(fps) {
+                warn!("reapplying stream fps after reinit failed: {e:#}");
+            }
+        }
         info!(
             "H2 ring: push and reinit done in {} ms",
             started.elapsed().as_millis()
@@ -1007,6 +1034,7 @@ impl WinUsbLcdCore {
     /// the MCU twice on 2026-09-06, once straight after the feed stopped
     /// and once after an acknowledged StopPlay.
     fn stream_end(&mut self, clean: bool) {
+        self.stream_fps = None;
         {
             let _bulk = self.transport.lock();
             self.transport.set_streaming(false);

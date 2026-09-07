@@ -470,39 +470,41 @@ impl H2AioController {
             debug!("H2: PushRgbData queued — the stream thread will stop play, send it and reopen");
             self.transport.defer(cmd);
             false
+        } else if !self.transport.hold_allowed() {
+            // Same spacing as the stream thread path, bursty saves or sdk
+            // clients must not run stop and reopen cycles back to back
+            debug!("H2: PushRgbData queued — reinit cycle throttled");
+            self.transport.defer(cmd);
+            false
         } else {
             // No stream thread is going to run the cycle, so run it here.
             // Straight after enumeration the panel copes with a bare write
             // (pid 22766: one lost GetVer reply, then fine), but a bare
             // write between two streams silenced it (pid 39118, 250 s), so
             // every write off the stream thread takes the full cycle.
-            // StopPlay/StopClock re-arm the control channel first; if a
-            // stream begins under us, queue instead.
+            // If a stream begins under us the cycle refuses and we queue.
             // A ring write still queued from an earlier stream is stale
             // now: latest wins, as `defer` does.
             self.transport.take_unsafe();
             let mut builder = PacketBuilder::new();
             let stop = builder.stop_play_header_winusb();
             let stop_clock = builder.stop_clock_header_winusb();
-            let armed = self.write_control("StopPlay", &stop, LCD_READ_TIMEOUT)?
-                && self.write_control("StopClock", &stop_clock, LCD_READ_TIMEOUT)?;
-            let pushed = if armed {
-                match self.transport.push_and_recover(
-                    "HydroShift II control",
-                    std::slice::from_ref(&cmd),
-                    LCD_WRITE_TIMEOUT,
-                    false,
-                ) {
-                    Ok(pushed) => pushed,
-                    Err(e) => {
-                        // Not delivered: keep it queued for the next stream
-                        // start, and let the caller see the failure.
-                        self.transport.defer(cmd);
-                        return Err(e);
-                    }
+            // The wake commands ride inside the cycle under one bulk guard,
+            // so a stream that begins meanwhile cannot see them land mid play
+            let pushed = match self.transport.push_and_recover(
+                "HydroShift II control",
+                &[("StopPlay", stop), ("StopClock", stop_clock)],
+                std::slice::from_ref(&cmd),
+                LCD_WRITE_TIMEOUT,
+                false,
+            ) {
+                Ok(pushed) => pushed,
+                Err(e) => {
+                    // Not delivered: keep it queued for the next stream
+                    // start, and let the caller see the failure.
+                    self.transport.defer(cmd);
+                    return Err(e);
                 }
-            } else {
-                false
             };
             if !pushed {
                 debug!("H2: PushRgbData queued — a stream began first");

@@ -775,3 +775,50 @@ fn render_zone_color(effect: &RgbEffect, led_count: usize) -> Vec<[u8; 3]> {
     };
     vec![color; led_count]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockRgb {
+        rf: bool,
+    }
+
+    impl RgbDevice for MockRgb {
+        fn device_name(&self) -> String {
+            "mock".into()
+        }
+        fn supported_modes(&self) -> Vec<RgbMode> {
+            vec![RgbMode::Static]
+        }
+        fn zone_info(&self) -> Vec<RgbZoneInfo> {
+            vec![]
+        }
+        fn set_zone_effect(&self, _zone: u8, _effect: &RgbEffect) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn rf_owned(&self) -> bool {
+            self.rf
+        }
+    }
+
+    #[test]
+    fn exposed_capabilities_hides_rf_owned_entries() {
+        let mut wired: HashMap<String, Arc<dyn RgbDevice>> = HashMap::new();
+        wired.insert(
+            "hid:kept".into(),
+            Arc::new(MockRgb { rf: false }) as Arc<dyn RgbDevice>,
+        );
+        wired.insert(
+            "hid:rf".into(),
+            Arc::new(MockRgb { rf: true }) as Arc<dyn RgbDevice>,
+        );
+        let ctrl = RgbController::new(wired, None);
+        let ids: Vec<String> = ctrl
+            .exposed_capabilities()
+            .into_iter()
+            .map(|c| c.device_id)
+            .collect();
+        assert_eq!(ids, ["hid:kept"]);
+    }
+}
