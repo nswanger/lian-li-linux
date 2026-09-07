@@ -6,7 +6,7 @@ what breaks on a local machine, send each fix upstream as one small PR, and
 hold the hardware knowledge those fixes needed. `main` mirrors upstream and
 is never committed to directly; `local` is `main` plus fork-only commits and
 is what the daily driver is built from. Out of scope: features nobody
-upstream asked for, and custom modifications that do not provide general 
+upstream asked for, and custom modifications that do not provide general
 benefit. A change should never benefit one user at the detriment of others.
 
 ## Non-negotiables
@@ -33,15 +33,15 @@ benefit. A change should never benefit one user at the detriment of others.
 
 ## A note from Nick
 
-I moved to this repo when switching to Linux and run it daily on my PC. Any 
-fixes impacts a maintainer and other users who cannot see my setup and I 
-cannot see theirs. The bar is a small diff, an honest PR body, and no behavior 
-change for anyone I did not test. 
+I moved to this repo when switching to Linux and run it daily on my PC. Any
+fix impacts a maintainer and other users who cannot see my setup and I
+cannot see theirs. The bar is a small diff, an honest PR body, and no behavior
+change for anyone I did not test.
 
-Prefer the boring fix that addresses the core issue and minimizes the surfaces 
-we touch. Tell me when something is wrong, including when the wrong claim was 
-ours. Flag it once, then proceed with what I choose. If a rule here fights the 
-task in front of you, say so and get my sign-off before breaking it. Everything 
+Prefer the boring fix that addresses the core issue and minimizes the surfaces
+we touch. Tell me when something is wrong, including when the wrong claim was
+ours. Flag it once, then proceed with what I choose. If a rule here fights the
+task in front of you, say so and get my sign-off before breaking it. Everything
 below is good defaults, not law.
 
 ## Glossary
