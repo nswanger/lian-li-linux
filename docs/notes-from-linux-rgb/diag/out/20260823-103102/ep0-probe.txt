@@ -1,0 +1,9 @@
+# EP0 liveness: lsusb -v on the LCD (hangs ~8s when the MCU is wedged)
+  iProduct                2 lianli-H2S-1.7
+  iSerial                 3 660b8008768a8302w
+        bEndpointAddress     0x81  EP 1 IN
+        bEndpointAddress     0x01  EP 1 OUT
+
+real	0m0.025s
+user	0m0.006s
+sys	0m0.001s

@@ -1,0 +1,20 @@
+== /sys/bus/usb/devices/1-12
+idVendor=1cbe
+idProduct=a034
+product=lianli-H2S-1.7
+serial=660b8008768a8302w
+devnum=3
+speed=480
+urbnum=2202
+power/runtime_status=active
+power/control=on
+== /sys/bus/usb/devices/1-7
+idVendor=0db0
+idProduct=0076
+product=MYSTIC LIGHT
+serial=7E7025010901
+devnum=2
+speed=12
+urbnum=32
+power/runtime_status=active
+power/control=on

@@ -1,0 +1,3 @@
+                     USER        PID ACCESS COMMAND
+/dev/bus/usb/001/003:
+                     nick       2428 F.... lianli-daemon

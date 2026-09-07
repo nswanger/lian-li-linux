@@ -1,0 +1,21 @@
+# Capture USB bus 1 (HydroShift II LCD + MSI Mystic Light) from early boot.
+# Install: sudo ./install.sh   Remove: sudo systemctl disable --now usbmon-bus1
+[Unit]
+Description=usbmon text capture of USB bus 1 (AIO LCD freeze investigation)
+DefaultDependencies=no
+After=systemd-modules-load.service local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/modprobe usbmon
+ExecStartPre=/usr/bin/mkdir -p /var/log/usbmon
+ExecStartPre=/usr/bin/chmod 755 /var/log/usbmon
+# Header with wall clock + uptime so usbmon timestamps (us, wall-clock mod 4096 s)
+# can be aligned with journalctl -o short-precise.
+ExecStart=/bin/sh -c 'f=/var/log/usbmon/bus1-$(date +%%Y%%m%%d-%%H%%M%%S).log; { echo "# start $(date -Is) uptime $(cut -d" " -f1 /proc/uptime)"; exec cat /sys/kernel/debug/usb/usbmon/1u; } | head -c 2G > "$f"; '
+UMask=0022
+Nice=-5
+
+[Install]
+WantedBy=sysinit.target
