@@ -79,9 +79,6 @@ pub struct H2AioController {
     last_sync: Mutex<Option<(std::time::Instant, u8, [u8; 3])>>,
     /// When the "telemetry held back while streaming" line was last logged.
     stale_params_logged_at: Mutex<Option<std::time::Instant>>,
-    /// Raw ring bytes and interval of the last PushRgbData that went out
-    /// or was queued, so an unchanged ring is not resent.
-    last_rgb_payload: Mutex<Option<(Vec<u8>, u8)>>,
 }
 
 impl H2AioController {
@@ -97,7 +94,6 @@ impl H2AioController {
             params_cache: Mutex::new(None),
             last_sync: Mutex::new(None),
             stale_params_logged_at: Mutex::new(None),
-            last_rgb_payload: Mutex::new(None),
         };
         wake(&transport);
         tracing::info!("HydroShift II control channel opened (shared transport)");
@@ -145,6 +141,7 @@ impl H2AioController {
             reply_wait,
             queued_at: std::time::Instant::now(),
             play_safe,
+            ring_key: None,
         });
         // The stream can end between the check above and the queueing:
         // stream_end() has then already drained the queue, and nothing
@@ -426,7 +423,7 @@ impl H2AioController {
         // stop/push/reopen cycle and a second of LCD pause, so an unchanged
         // ring is not resent.
         let payload_key = (raw.clone(), interval_ms);
-        if self.last_rgb_payload.lock().as_ref() == Some(&payload_key) {
+        if self.transport.last_ring_payload().as_ref() == Some(&payload_key) {
             debug!("H2: PushRgbData skipped — ring unchanged");
             return Ok(());
         }
@@ -465,6 +462,7 @@ impl H2AioController {
             reply_wait: Duration::from_millis(100),
             queued_at: std::time::Instant::now(),
             play_safe: false,
+            ring_key: Some(payload_key),
         };
         let sent = if self.transport.is_streaming() {
             debug!("H2: PushRgbData queued — the stream thread will stop play, send it and reopen");
@@ -512,10 +510,6 @@ impl H2AioController {
             }
             pushed
         };
-        // Queued writes count too: the queue keeps the latest ring write
-        // until it is delivered (stream end no longer drops it), so a later
-        // identical apply has nothing to add.
-        *self.last_rgb_payload.lock() = Some(payload_key);
         debug!(
             "H2: PushRgbData {} frame(s), {} LEDs, {} bytes{}",
             total_frames,

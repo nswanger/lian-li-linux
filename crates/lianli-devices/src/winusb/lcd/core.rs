@@ -24,6 +24,9 @@ pub struct PendingCmd {
     /// after it (2026-09-06); those only go out once the stream thread has
     /// stopped play and reinitialised the panel (see `reinit_and_flush_unsafe`).
     pub play_safe: bool,
+    /// Ring payload identity of a PushRgbData, recorded by the link once the
+    /// packet is actually on the wire so identical applies can be skipped.
+    pub ring_key: Option<(Vec<u8>, u8)>,
 }
 
 /// USB bulk handle shared by the LCD stream and the HydroShift II control
@@ -47,6 +50,9 @@ pub struct LcdLink {
     needs_init: AtomicBool,
     /// When the last push-and-recover cycle ran, to space cycles out.
     last_hold: Mutex<Option<Instant>>,
+    /// Ring payload of the last PushRgbData that reached the wire, used to
+    /// skip identical re applies. Defers never record.
+    last_ring: Mutex<Option<(Vec<u8>, u8)>>,
     pending: Mutex<Vec<PendingCmd>>,
 }
 
@@ -58,6 +64,7 @@ impl LcdLink {
             streaming: AtomicBool::new(false),
             needs_init: AtomicBool::new(false),
             last_hold: Mutex::new(None),
+            last_ring: Mutex::new(None),
             pending: Mutex::new(Vec::new()),
         }
     }
@@ -177,6 +184,9 @@ impl LcdLink {
             );
             bulk.write_full(&cmd.packet, write_timeout)
                 .with_context(|| format!("H2 ring: {} write", cmd.label))?;
+            if let Some(key) = &cmd.ring_key {
+                *self.last_ring.lock() = Some(key.clone());
+            }
             let mut buf = [0u8; 512];
             match bulk.read(&mut buf, cmd.reply_wait) {
                 Ok(n) if n > 0 => debug!(
@@ -227,6 +237,11 @@ impl LcdLink {
             ),
         }
         Ok(true)
+    }
+
+    /// Ring payload of the last PushRgbData that reached the wire.
+    pub(crate) fn last_ring_payload(&self) -> Option<(Vec<u8>, u8)> {
+        self.last_ring.lock().clone()
     }
 
     /// Queue a control command for the stream thread. Latest wins per label:
