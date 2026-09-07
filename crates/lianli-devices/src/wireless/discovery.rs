@@ -243,10 +243,20 @@ pub(super) fn parse_master_record(data: &[u8]) -> Option<([u8; 6], u8)> {
     Some((mac, data[12]))
 }
 
-pub(super) fn merge_master_sightings(found: &[([u8; 6], u8)], masters: &MasterEntryMap) {
+pub(super) fn merge_master_sightings(
+    found: &[([u8; 6], u8)],
+    local: &[u8; 6],
+    masters: &MasterEntryMap,
+) {
     let now = Instant::now();
     let mut masters = masters.lock();
     for (mac, channel) in found {
+        // The dongle reports itself as a master record with our own MAC.
+        // Keeping it would log our own address as a foreign master and
+        // disagree with the channel the discovery probe picked.
+        if mac == local {
+            continue;
+        }
         if !masters.contains_key(mac) {
             info!(
                 "foreign master dongle {:02x?} online on channel {channel}",
@@ -442,7 +452,8 @@ pub(super) fn poll_and_discover(
             }
 
             merge_sightings(&found, health_map, discovered_devices, master_mac);
-            merge_master_sightings(&found_masters, master_entries);
+            let local = *master_mac.lock();
+            merge_master_sightings(&found_masters, &local, master_entries);
         }
     }
 
@@ -695,16 +706,27 @@ mod tests {
     fn master_sightings_track_liveness() {
         let masters: MasterEntryMap = Arc::new(Mutex::new(Default::default()));
         let mac = [9u8; 6];
+        let local = [1u8; 6];
 
-        merge_master_sightings(&[(mac, 8)], &masters);
+        merge_master_sightings(&[(mac, 8)], &local, &masters);
         assert!(masters.lock().contains_key(&mac));
 
         let stale = Instant::now()
             .checked_sub(LIVENESS_TIMEOUT + Duration::from_secs(1))
             .expect("uptime too short for test");
         masters.lock().get_mut(&mac).unwrap().last_seen = stale;
-        merge_master_sightings(&[], &masters);
+        merge_master_sightings(&[], &local, &masters);
         assert!(!masters.lock().contains_key(&mac));
+    }
+
+    #[test]
+    fn own_master_record_is_not_tracked_as_foreign() {
+        let masters: MasterEntryMap = Arc::new(Mutex::new(Default::default()));
+        let local = [1u8; 6];
+
+        merge_master_sightings(&[(local, 8), ([9u8; 6], 8)], &local, &masters);
+        assert!(!masters.lock().contains_key(&local));
+        assert!(masters.lock().contains_key(&[9u8; 6]));
     }
 
     #[test]

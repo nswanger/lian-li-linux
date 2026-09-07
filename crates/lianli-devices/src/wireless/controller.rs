@@ -913,8 +913,8 @@ mod tests {
         *c.master_channel.lock() = 2;
         assert_eq!(c.arbitration_target(), None);
 
-        // Our dongle self reports as a master record. That alone must not
-        // count as a conflict.
+        // Defense in depth: merge skips our own record now, but a stale or
+        // directly inserted own entry must not count as a conflict either.
         c.master_entries.lock().insert(
             [9u8; 6],
             crate::wireless::discovery::MasterEntry {
