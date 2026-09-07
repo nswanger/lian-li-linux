@@ -4,7 +4,7 @@ Contributor checkout of `sgtaziz/lian-li-linux`, the open-source Linux
 replacement for L-Connect 3. Upstream is the product. This fork exists to fix
 what breaks on a local machine, send each fix upstream as one small PR, and
 hold the hardware knowledge those fixes needed. `main` mirrors upstream and
-is never committed to directly; `local` is `main` plus fork-only commits and
+is never committed to directly; `nswanger/local` is `main` plus fork-only commits and
 is what the daily driver is built from. Out of scope: features nobody
 upstream asked for, and custom modifications that do not provide general
 benefit. A change should never benefit one user at the detriment of others.
@@ -14,7 +14,7 @@ benefit. A change should never benefit one user at the detriment of others.
 - **Upstream is the product.** The maintainer squash-merges and has AI
   reviews; Conventional Commit subjects are welcome. Their decisions are not
   re-litigated in our PRs. Nothing fork-only reaches a PR: PR branches are
-  cut from `main`, never from `local`.
+  cut from `main`, never from `nswanger/local`.
 - **One hardware set, one configuration.** We can test what we have: a wired
   HydroShift II LCD Square (`1cbe:a034`, firmware 1.7) bridged to its
   wireless pump head, four wireless UNI FAN TL groups on one TX/RX dongle,
@@ -62,7 +62,7 @@ below is good defaults, not law.
   through a stop/push/reopen cycle.
 - **SDK server**: the daemon's OpenRGB-protocol listener on port 6743; while a
   client is connected the daemon suppresses its native RGB config.
-- **Daily driver**: the installed package built from `local`; a running one
+- **Daily driver**: the installed package built from `nswanger/local`; a running one
   is a soak and the soak is evidence.
 
 ## Ways to hurt yourself
@@ -100,7 +100,7 @@ below is good defaults, not law.
 | `docs/local/h2-wired-protocol.md` | living doc: what is legal on the wired HydroShift II pipe, with confidence and evidence |
 | `docs/local/diag/` | freeze capture tooling and cited evidence; has a README |
 | `docs/rgb-mode-capabilities-plan.md`, `README.md`, `CHANGELOG.md`, `templates/` | upstream-owned; not restructured here |
-| `~/Github-Repos/lianli-pkg/PKGBUILD` | builds the daily driver from this checkout's `local` branch; the older package files beside it are the rollback path |
+| `~/Github-Repos/lianli-pkg/PKGBUILD` | builds the daily driver from this checkout's `nswanger/local` branch; the older package files beside it are the rollback path |
 | `~/Github-Repos/linux-rgb/` | OpenRGB scripts and palettes that consume the SDK server |
 
 Tracker: fork-local work is GitHub Issues in `nswanger/lian-li-linux`, via
