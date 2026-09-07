@@ -141,6 +141,7 @@ impl H2AioController {
             reply_wait,
             queued_at: std::time::Instant::now(),
             play_safe,
+            ring_key: None,
         });
         // The stream can end between the check above and the queueing:
         // stream_end() has then already drained the queue, and nothing
@@ -169,10 +170,12 @@ impl H2AioController {
         Ok(true)
     }
 
-    /// Send commands left in the queue by the teardown race above. The stream
-    /// is over, so these go straight out.
+    /// Send play-safe commands left in the queue by the teardown race above.
+    /// The stream is over, so these go straight out. Commands that need the
+    /// panel reinitialised first (PushRgbData) stay queued for the LCD
+    /// stream thread, which owns the raw device handle.
     fn send_stranded(&self) {
-        for cmd in self.transport.take_pending() {
+        for cmd in self.transport.take_play_safe() {
             debug!("H2: sending {} stranded by stream teardown", cmd.label);
             match self.write_control(cmd.label, &cmd.packet, cmd.reply_wait) {
                 Ok(true) => {}
@@ -397,6 +400,14 @@ impl H2AioController {
         if frames.is_empty() {
             return Ok(());
         }
+        // Bridged to a wireless AIO: the same 24-LED ring is driven over RF
+        // through the pump-head device, as the fan and pump paths already
+        // are, so this packet is redundant here and the wired write is
+        // skipped.
+        if self.is_wireless.load(Ordering::Relaxed) {
+            debug!("H2: PushRgbData skipped — ring is driven over RF (wireless mode)");
+            return Ok(());
+        }
         let total_frames = frames.len();
 
         let mut raw = Vec::with_capacity(total_frames * RING_LED_COUNT * 3);
@@ -405,6 +416,16 @@ impl H2AioController {
                 let c = frame.get(led).copied().unwrap_or([0, 0, 0]);
                 raw.extend_from_slice(&c);
             }
+        }
+
+        // The daemon re-applies every configured effect on each config
+        // reload, including LCD media switches. Each write here costs a
+        // stop/push/reopen cycle and a second of LCD pause, so an unchanged
+        // ring is not resent.
+        let payload_key = (raw.clone(), interval_ms);
+        if self.transport.last_ring_payload().as_ref() == Some(&payload_key) {
+            debug!("H2: PushRgbData skipped — ring unchanged");
+            return Ok(());
         }
 
         let compressed = crate::tinyuz::compress(&raw).context("compressing RGB data")?;
@@ -426,24 +447,75 @@ impl H2AioController {
         // This packet is a full 512-byte header plus the compressed RGB payload,
         // so it exceeds one bulk packet; send_control uses write_full so every
         // byte goes out (a plain write() merely warned on the short write).
+        //
         // Not play-safe: a PushRgbData during H.264 play mode hangs the panel
-        // even at buffer level 1 (2026-08-23) — presumably the firmware feeds
-        // the payload after the header to its stream parser. While the LCD
-        // streams, the ring is reachable over RF through the bridged wireless
-        // AIO instead; this frame is held until the stream ends.
-        let sent = self.send_control("PushRgbData", packet, Duration::from_millis(100), false)?;
-        if !sent {
-            tracing::warn!(
-                "H2: ring RGB held until the LCD stream ends (PushRgbData hangs the panel in play mode); \
-                 use the wireless pump-head device to recolour the ring while streaming"
-            );
-        }
+        // even at buffer level 1 (2026-08-23), and one sent after the stream
+        // ended hangs it too (2026-09-06), even after an acknowledged
+        // StopPlay. Once the panel has played anything, the packet is
+        // therefore handed to the LCD stream thread, which stops play,
+        // reopens the handle, reruns the init sequence, sends it, and
+        // resumes (`reinit_and_flush_unsafe`). Straight after enumeration it
+        // goes out directly, as it always did.
+        let cmd = PendingCmd {
+            label: "PushRgbData",
+            packet,
+            reply_wait: Duration::from_millis(100),
+            queued_at: std::time::Instant::now(),
+            play_safe: false,
+            ring_key: Some(payload_key),
+        };
+        let sent = if self.transport.is_streaming() {
+            debug!("H2: PushRgbData queued — the stream thread will stop play, send it and reopen");
+            self.transport.defer(cmd);
+            false
+        } else if !self.transport.hold_allowed() {
+            // Same spacing as the stream thread path, bursty saves or sdk
+            // clients must not run stop and reopen cycles back to back
+            debug!("H2: PushRgbData queued — reinit cycle throttled");
+            self.transport.defer(cmd);
+            false
+        } else {
+            // No stream thread is going to run the cycle, so run it here.
+            // Straight after enumeration the panel copes with a bare write
+            // (pid 22766: one lost GetVer reply, then fine), but a bare
+            // write between two streams silenced it (pid 39118, 250 s), so
+            // every write off the stream thread takes the full cycle.
+            // If a stream begins under us the cycle refuses and we queue.
+            // A ring write still queued from an earlier stream is stale
+            // now: latest wins, as `defer` does.
+            self.transport.take_unsafe();
+            let mut builder = PacketBuilder::new();
+            let stop = builder.stop_play_header_winusb();
+            let stop_clock = builder.stop_clock_header_winusb();
+            // The wake commands ride inside the cycle under one bulk guard,
+            // so a stream that begins meanwhile cannot see them land mid play
+            let pushed = match self.transport.push_and_recover(
+                "HydroShift II control",
+                &[("StopPlay", stop), ("StopClock", stop_clock)],
+                std::slice::from_ref(&cmd),
+                LCD_WRITE_TIMEOUT,
+                false,
+            ) {
+                Ok(pushed) => pushed,
+                Err(e) => {
+                    // Not delivered: keep it queued for the next stream
+                    // start, and let the caller see the failure.
+                    self.transport.defer(cmd);
+                    return Err(e);
+                }
+            };
+            if !pushed {
+                debug!("H2: PushRgbData queued — a stream began first");
+                self.transport.defer(cmd);
+            }
+            pushed
+        };
         debug!(
             "H2: PushRgbData {} frame(s), {} LEDs, {} bytes{}",
             total_frames,
             RING_LED_COUNT,
             payload.len(),
-            if sent { "" } else { " (deferred)" }
+            if sent { "" } else { " (queued)" }
         );
         Ok(())
     }
@@ -604,6 +676,10 @@ impl RgbDevice for H2AioController {
 
     fn supports_direct(&self) -> bool {
         true
+    }
+
+    fn rf_owned(&self) -> bool {
+        self.is_wireless_mode()
     }
 
     fn set_zone_effect(&self, zone: u8, effect: &RgbEffect) -> Result<()> {
