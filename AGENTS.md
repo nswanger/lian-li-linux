@@ -4,8 +4,8 @@ Contributor checkout of `sgtaziz/lian-li-linux`, the open-source Linux
 replacement for L-Connect 3. Upstream is the product. This fork exists to fix
 what breaks on a local machine, send each fix upstream as one small PR, and
 hold the hardware knowledge those fixes needed. `main` mirrors upstream and
-is never committed to directly; `nswanger/local` is `main` plus fork-only commits and
-is what the daily driver is built from. Out of scope: features nobody
+is never committed to directly; `nswanger/local` is `main` plus fork-only
+commits; nothing installed is built from it. Out of scope: features nobody
 upstream asked for, and custom modifications that do not provide general
 benefit. A change should never benefit one user at the detriment of others.
 
@@ -18,7 +18,7 @@ benefit. A change should never benefit one user at the detriment of others.
 - **One hardware set, one configuration.** We can test what we have: a wired
   HydroShift II LCD Square (`1cbe:a034`, firmware 1.7) bridged to its
   wireless pump head, four wireless UNI FAN TL groups on one TX/RX dongle,
-  the per-user daemon on CachyOS built from the local package, and
+  the per-user daemon on CachyOS from the AUR `lianli-linux-git` package, and
   `openrgb_server` on with OpenRGB owning every RGB surface through the SDK
   server. Every other device family, wired-only units, the daemon's native
   RGB effect path, the system-service mode, and Fedora packaging are untested
@@ -62,8 +62,10 @@ below is good defaults, not law.
   through a stop/push/reopen cycle.
 - **SDK server**: the daemon's OpenRGB-protocol listener on port 6743; while a
   client is connected the daemon suppresses its native RGB config.
-- **Daily driver**: the installed package built from `nswanger/local`; a running one
-  is a soak and the soak is evidence.
+- **Daily driver**: the stock AUR `lianli-linux-git` package, updated with
+  paru.
+- **Soak build**: a fix branch built with the local PKGBUILD and installed in
+  place of the daily driver; a running one is a soak and the soak is evidence.
 
 ## Ways to hurt yourself
 
@@ -73,8 +75,12 @@ below is good defaults, not law.
 - Root commands are the user's to run. Hand over the exact command in a block;
   the agent has no sudo password, and guessed flags produced the systemctl
   "--global is not allowed" error.
-- Build the package with `makepkg -f -d` under the nvm node on PATH. The
-  `-s` flag tries to sudo-install npm, which pacman does not know about.
+- Build a soak build with `LIANLI_BRANCH=<branch> makepkg -f -d` under the
+  nvm node on PATH. The `-s` flag tries to sudo-install npm, which pacman
+  does not know about.
+- A paru update during a soak can replace the soak build with stock once
+  upstream gets new commits. Check `pacman -Q lianli-linux-git` before
+  reading the journal as soak evidence.
 - Give the user the `sudo pacman -U` and `systemctl --user restart`
   lines when needing to be run together.
 - Udev rules go to `/usr/lib/udev/rules.d/`, never `/etc/udev/rules.d/`; an
@@ -100,7 +106,9 @@ below is good defaults, not law.
 | `docs/local/h2-wired-protocol.md` | living doc: what is legal on the wired HydroShift II pipe, with confidence and evidence |
 | `docs/local/diag/` | freeze capture tooling and cited evidence; has a README |
 | `docs/rgb-mode-capabilities-plan.md`, `README.md`, `CHANGELOG.md`, `templates/` | upstream-owned; not restructured here |
-| `~/Github-Repos/lianli-pkg/PKGBUILD` | builds the daily driver from this checkout's `nswanger/local` branch; the older package files beside it are the rollback path |
+| `~/Github-Repos/lianli-pkg/PKGBUILD` | the AUR PKGBUILD with its source pointed at this checkout; builds the branch named in `LIANLI_BRANCH` as a soak build. Resync it from the paru clone when upstream packaging changes |
+| `~/.cache/paru/clone/lianli-linux-git/` | paru's build of the daily driver; earlier packages there are the rollback path, and `paru -S lianli-linux-git` returns to stock |
+| `~/.config/paru/paru.conf` | includes `/etc/paru.conf` and sets `KeepSrc`, so an update recompiles only the workspace crates. A `rust` upgrade still rebuilds everything; delete the clone's `src/` now and then to reclaim space |
 | `~/Github-Repos/linux-rgb/` | OpenRGB scripts and palettes that consume the SDK server |
 
 Tracker: fork-local work is GitHub Issues in `nswanger/lian-li-linux`, via
@@ -114,6 +122,6 @@ its structural tests and change only through upstream PRs; the upstream
 ## Verifying
 
 `cargo check`, `cargo test -p lianli-devices`, and `cargo fmt --check` gate a
-PR; CI runs a full build and test on PRs to `main`. The real proof is the
-daily driver: rebuild the package, hand the user the install and restart lines,
-and read the journal by the new pid.
+PR; CI runs a full build and test on PRs to `main`. The real proof is a soak:
+build the fix branch with the local PKGBUILD, hand the user the install and
+restart lines, and read the journal by the new pid.
